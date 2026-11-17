@@ -2,6 +2,7 @@
 <!-- PROTOTYPE - NOT FOR PRODUCTION -->
 <!-- Question: Is chasing your own split on one short track fun enough to restart twenty times? -->
 <!-- Date: 2026-11-17 -->
+<!-- Iteration 2, 2026-11-18: twenty tracks (tracks.js) and a track picker. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -40,6 +41,7 @@
 </div></div>
 <script src="vendor/three.js"></script>
 <script src="config.js"></script>
+<script src="tracks.js"></script>
 <script>
 'use strict';
 // Trackmanus: a time trial down a clifftop road. The 3D world is drawn with three.js into an
@@ -190,31 +192,12 @@ function noise(x, z) { // smooth value noise, -1 to 1
 
 // ---- The track: pieces laid end to end, sampled every 2 m --------------------------------
 //<track>
-// A piece is ['s', length m, height change m] or ['a', radius m, angle deg (+ turns right),
-// height change m, bank deg]. x runs east, z runs south (towards the sea), y is up.
-const TRACK = [
-  ['s', 220, -6],            // 0  the start straight: the throttle
-  ['a', 160, 40, -5],        // 1  a wide bend: steering
-  ['s', 80, -4],             // 2
-  ['a', 70, -70, -4],        // 3  a tighter bend: the brake
-  ['s', 110, -5],            // 4  checkpoint 1 near its end
-  ['a', 24, 180, -6],        // 5  the downhill hairpin: the first drift
-  ['s', 140, -8],            // 6
-  ['a', 100, -60, -5, 10],   // 7  the banked bend
-  ['s', 60, -3],             // 8  checkpoint 2
-  ['a', 70, 55, -3],         // 9  an S...
-  ['a', 70, -35, -2],        // 10
-  ['a', 80, 80, -5],         // 11 ...that swings round to the west
-  ['s', 130, -6],            // 12 checkpoint 3 near its end
-  ['a', 26, -170, -6],       // 13 the second hairpin
-  ['s', 110, -5],            // 14
-  ['s', 60, 3.5],            // 15 the kicker
-  ['s', 45, -5.5],           // 16 the drop behind the crest: the jump
-  ['s', 100, -3],            // 17 the landing
-  ['a', 200, 25, -2],        // 18
-  ['s', 150, -1],            // 19 the finish straight
-];
-const HW = CONFIG.roadHalfWidth.value, DS = 2, START_Y = 96;
+// The tracks are in tracks.js. A piece is ['s', length m, height change m] or ['a', radius m,
+// angle deg (+ turns right), height change m, bank deg]. x runs east, z runs south (towards the
+// sea), y is up.
+const TRACKS = window.TRACKS;
+const HW = CONFIG.roadHalfWidth.value, DS = 2;
+const START_S = 14, ARCH_S = 26;
 function boxSmooth(a, r, passes) {
   let src = Array.from(a);
   for (let p = 0; p < passes; p++) {
@@ -228,12 +211,13 @@ function boxSmooth(a, r, passes) {
   }
   return src;
 }
-const TX = [], TZ = [], TH = [], PS = [], PE = []; // sample x, z, heading; each piece's start and end distance
-let TY = [], TB = [], TK = [], TS = [];
-(function lay() {
-  let x = 0, z = 0, h = 0, y = START_Y, s = 0;
+function idxIn(ts, s) { let a = 0, b = ts.length - 1; while (b - a > 1) { const m = (a + b) >> 1; if (ts[m] <= s) a = m; else b = m; } return a; }
+function layTrack(def) { // one track's road: sample x, z, height, heading; each piece's start and end distance
+  const TX = [], TZ = [], TH = [], PS = [], PE = [];
+  let TY = [], TB = [], TK = [], TS = [];
+  let x = 0, z = 0, h = (def.h0 || 0) * Math.PI / 180, y = def.y0, s = 0;
   const put = (k, b) => { TX.push(x); TZ.push(z); TY.push(y); TH.push(h); TK.push(k); TB.push(b); TS.push(s); };
-  for (const p of TRACK) {
+  for (const p of def.pieces) {
     const arc = p[0] === 'a';
     const len = arc ? p[1] * Math.abs(p[2]) * Math.PI / 180 : p[1];
     const dy = arc ? p[3] : p[2];
@@ -249,15 +233,33 @@ let TY = [], TB = [], TK = [], TS = [];
     PE.push(s);
   }
   put(0, 0);
-})();
-const N = TX.length, LEN = TS[N - 1];
-TY = boxSmooth(TY, 3, 3); TB = boxSmooth(TB, 6, 2);
-const TKS = boxSmooth(TK, 3, 2); // curvature, eased in and out of each bend
-const COS = TH.map(Math.cos), SIN = TH.map(Math.sin), TANB = TB.map(Math.tan);
-const SL = TY.map((y, i) => { const a = Math.max(0, i - 1), b = Math.min(N - 1, i + 1); return (TY[b] - TY[a]) / (TS[b] - TS[a]); });
-const START_S = 14, ARCH_S = 26, FINISH_S = LEN - 70;
-const CP_S = [PE[4] - 20, PE[8] - 8, PE[12] - 25];
-function idxAt(s) { let a = 0, b = N - 1; while (b - a > 1) { const m = (a + b) >> 1; if (TS[m] <= s) a = m; else b = m; } return a; }
+  const N = TX.length, LEN = TS[N - 1];
+  TY = boxSmooth(TY, 3, 3); TB = boxSmooth(TB, 6, 2);
+  const TKS = boxSmooth(TK, 3, 2); // curvature, eased in and out of each bend
+  const L = { def, N, LEN, TX, TZ, TY, TH, TK, TKS, TB, TS, PS, PE, COS: TH.map(Math.cos), SIN: TH.map(Math.sin), TANB: TB.map(Math.tan) };
+  L.SL = TY.map((v, i) => { const a = Math.max(0, i - 1), b = Math.min(N - 1, i + 1); return (TY[b] - TY[a]) / (TS[b] - TS[a]); });
+  L.FINISH_S = LEN - 70;
+  if (def.cps) L.CP_S = def.cps.map(c => PE[c[0]] - c[1]); // each [piece, metres before its end]
+  else { // two or three arches, evenly spread, each moved to the nearest straight
+    const n = LEN < 1300 ? 2 : 3, flat = i => { for (let j = Math.max(0, i - 6); j <= Math.min(N - 1, i + 6); j++) if (Math.abs(TKS[j]) > 1 / 600) return false; return true; };
+    L.CP_S = [];
+    for (let k = 1; k <= n; k++) {
+      const want = START_S + (L.FINISH_S - START_S) * k / (n + 1), i0 = idxIn(TS, want), win = Math.round(LEN * 0.1 / DS);
+      let bi = -1;
+      for (let d = 0; d <= win && bi < 0; d++) { if (i0 + d < N && flat(i0 + d)) bi = i0 + d; else if (i0 - d >= 0 && flat(i0 - d)) bi = i0 - d; }
+      L.CP_S.push(bi < 0 ? want : TS[bi]);
+    }
+  }
+  L.minX = Math.min(...TX); L.maxX = Math.max(...TX); L.minZ = Math.min(...TZ); L.maxZ = Math.max(...TZ);
+  L.HB = def.pieces.findIndex(p => p[0] === 'a' && p[1] <= 75);                          // the first bend that needs the brake
+  L.HD = def.pieces.findIndex(p => p[0] === 'a' && p[1] <= 32 && Math.abs(p[2]) >= 120); // the first hairpin
+  return L;
+}
+const LAID = TRACKS.map(layTrack);
+// The track in play. These are swapped, all together, when another track is loaded.
+let cur = 0, N, LEN, TX, TZ, TY, TH, TK, TKS, TB, TS, PS, PE, COS, SIN, TANB, SL, FINISH_S, CP_S;
+function useTrack(i) { cur = i; ({ N, LEN, TX, TZ, TY, TH, TK, TKS, TB, TS, PS, PE, COS, SIN, TANB, SL, FINISH_S, CP_S } = LAID[i]); }
+function idxAt(s) { return idxIn(TS, s); }
 function nearest(x, z, hint, win) { // the nearest sample to a point, searched around a hint
   let bi = hint, bd = 1e18;
   const a = Math.max(0, hint - win), b = Math.min(N - 1, hint + win);
@@ -267,15 +269,21 @@ function nearest(x, z, hint, win) { // the nearest sample to a point, searched a
 //</track>
 
 // ---- The land: a height grid shaped from the track, with cliffs down to the sea ------------
-const CS = 6, CORR = HW + 9, SEA_FLOOR = -7, MARG = 30;
-let minX = 1e9, maxX = -1e9, minZ = 1e9, maxZ = -1e9;
-for (let i = 0; i < N; i++) { minX = Math.min(minX, TX[i]); maxX = Math.max(maxX, TX[i]); minZ = Math.min(minZ, TZ[i]); maxZ = Math.max(maxZ, TZ[i]); }
-const GX0 = Math.floor((minX - 420) / CS) * CS, GZ0 = Math.floor((minZ - 330) / CS) * CS;
-const NX = Math.ceil((maxX + 180 - GX0) / CS) + 1, NZ = Math.ceil((maxZ + 180 - GZ0) / CS) + 1;
-const HG = new Float32Array(NX * NZ), DG = new Float32Array(NX * NZ), MG = new Float32Array(NX * NZ);
-// The coast: the sea starts a little way south and east of the outermost road; the land runs on to the west and north.
-const sEnv = new Array(NX).fill(NaN), eEnv = new Array(NZ).fill(NaN);
-(function coast() {
+const CS = 6, CORR = HW + 9, SEA_FLOOR = -7;
+let MARG = 30, minX, maxX, minZ, maxZ, GX0, GZ0, NX, NZ, HG, DG, MG, sEnv, eEnv;
+function envAt(a, f) { const i = clamp(Math.floor(f), 0, a.length - 2), t = clamp(f - i, 0, 1); return a[i] + (a[i + 1] - a[i]) * t; }
+function margin(x, z) { // metres inside the coast: below 0 is sea
+  const fx = (x - GX0) / CS, fz = (z - GZ0) / CS;
+  return Math.min(envAt(sEnv, fx) + MARG - z, envAt(eEnv, fz) + MARG - x) + noise(x * 0.021 + 7, z * 0.021 - 3) * 6;
+}
+function buildGround() { // the land for the track in play
+  const L = LAID[cur];
+  MARG = L.def.marg || 30; minX = L.minX; maxX = L.maxX; minZ = L.minZ; maxZ = L.maxZ;
+  GX0 = Math.floor((minX - 420) / CS) * CS; GZ0 = Math.floor((minZ - 330) / CS) * CS;
+  NX = Math.ceil((maxX + 180 - GX0) / CS) + 1; NZ = Math.ceil((maxZ + 180 - GZ0) / CS) + 1;
+  HG = new Float32Array(NX * NZ); DG = new Float32Array(NX * NZ); MG = new Float32Array(NX * NZ);
+  // The coast: the sea starts a little way south and east of the outermost road; the land runs on to the west and north.
+  sEnv = new Array(NX).fill(NaN); eEnv = new Array(NZ).fill(NaN);
   const wc = Math.ceil(70 / CS);
   for (let i = 0; i < N; i++) {
     const ix = Math.round((TX[i] - GX0) / CS), iz = Math.round((TZ[i] - GZ0) / CS);
@@ -292,29 +300,20 @@ const sEnv = new Array(NX).fill(NaN), eEnv = new Array(NZ).fill(NaN);
     for (let j = l + 1; j < a.length; j++) a[j] = a[l] + (j - l) * CS * hi;
   };
   fill(sEnv, -0.15, -0.7); fill(eEnv, 1.0, -0.5);
-  const s2 = boxSmooth(sEnv, 5, 2), e2 = boxSmooth(eEnv, 5, 2);
-  for (let j = 0; j < NX; j++) sEnv[j] = s2[j];
-  for (let j = 0; j < NZ; j++) eEnv[j] = e2[j];
-})();
-function envAt(a, f) { const i = clamp(Math.floor(f), 0, a.length - 2), t = clamp(f - i, 0, 1); return a[i] + (a[i + 1] - a[i]) * t; }
-function margin(x, z) { // metres inside the coast: below 0 is sea
-  const fx = (x - GX0) / CS, fz = (z - GZ0) / CS;
-  return Math.min(envAt(sEnv, fx) + MARG - z, envAt(eEnv, fz) + MARG - x) + noise(x * 0.021 + 7, z * 0.021 - 3) * 6;
-}
-(function shape() {
+  sEnv = boxSmooth(sEnv, 5, 2); eEnv = boxSmooth(eEnv, 5, 2);
   const sub = []; for (let i = 0; i < N; i += 4) sub.push(i);
   for (let iz = 0; iz < NZ; iz++) for (let ix = 0; ix < NX; ix++) {
     const x = GX0 + ix * CS, z = GZ0 + iz * CS, o = iz * NX + ix;
-    const i = nearest(x, z, 0, N), dx = x - TX[i], dz = z - TZ[i];
+    let sw = 0, sh = 0, bj = 0, bq = 1e18;
+    for (let k = 0; k < sub.length; k++) { // a smooth hillside through every part of the road, and the part nearest this spot
+      const j = sub[k], ex = x - TX[j], ez = z - TZ[j], q = ex * ex + ez * ez, w = 1 / ((q + 900) ** 2);
+      sw += w; sh += w * TY[j]; if (q < bq) { bq = q; bj = j; }
+    }
+    const i = nearest(x, z, bj, 4), dx = x - TX[i], dz = z - TZ[i];
     const d = Math.hypot(dx, dz);
     let al = dx * COS[i] + dz * SIN[i]; const lat = -dx * SIN[i] + dz * COS[i];
     if ((i === 0 && al < 0) || (i === N - 1 && al > 0)) al = 0;
     const plane = TY[i] + al * SL[i] - clamp(lat, -CORR, CORR) * TANB[i] - 0.25; // the road's own surface, carried out to the verge
-    let sw = 0, sh = 0;
-    for (let k = 0; k < sub.length; k++) { // a smooth hillside through every part of the road
-      const j = sub[k], ex = x - TX[j], ez = z - TZ[j], w = 1 / ((ex * ex + ez * ez + 900) ** 2);
-      sw += w; sh += w * TY[j];
-    }
     const m = margin(x, z);
     let h = sh / sw - 0.25 + noise(x * 0.013, z * 0.013) * 6 * smooth(30, 130, d) + noise(x * 0.045 + 5, z * 0.045) * 1.4 * smooth(CORR, CORR + 25, d);
     h += smooth(70, 420, d) * 70 * smooth(30, 220, m); // hills inland
@@ -322,7 +321,7 @@ function margin(x, z) { // metres inside the coast: below 0 is sea
     h = lerp(h, SEA_FLOOR, smooth(4, -14, m)); // the cliff
     HG[o] = h; DG[o] = d; MG[o] = m;
   }
-})();
+}
 function terrainH(x, z) {
   const fx = (x - GX0) / CS, fz = (z - GZ0) / CS;
   if (!(fx >= 0 && fz >= 0 && fx < NX - 1 && fz < NZ - 1)) return SEA_FLOOR;
@@ -429,7 +428,11 @@ world.add(new THREE.HemisphereLight('#fff6e6', '#7d93b5', 1.9)); // cool in the 
 const sun = new THREE.DirectionalLight('#ffe9c4', 2.5); sun.position.set(0.45, 0.8, 0.4); world.add(sun); // warm in the light
 const camera = new THREE.PerspectiveCamera(62, W / H, 0.5, 9000);
 
-(function buildLand() {
+// Everything that belongs to one track hangs on this group, and is thrown away when another track is loaded.
+let tg = new THREE.Group(); world.add(tg);
+const sea = new THREE.Mesh(new THREE.PlaneGeometry(16000, 16000), new THREE.MeshLambertMaterial({ color: C.sea })); // deep teal
+sea.rotation.x = -Math.PI / 2; world.add(sea);
+function buildLand() {
   const cells = (NX - 1) * (NZ - 1), pos = new Float32Array(cells * 18), nor = new Float32Array(cells * 18), col = new Float32Array(cells * 18);
   let o = 0;
   const grass = C.grass.map(lin), rock = C.rock.map(lin), beach = lin(C.beach), verge = lin(C.verge), hill = lin(C.hill);
@@ -452,11 +455,10 @@ const camera = new THREE.PerspectiveCamera(62, W / H, 0.5, 9000);
   for (let iz = 0; iz < NZ - 1; iz++) for (let ix = 0; ix < NX - 1; ix++) { tri(ix, iz, ix, iz + 1, ix + 1, iz); tri(ix + 1, iz, ix, iz + 1, ix + 1, iz + 1); }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  const land = new THREE.Mesh(g, MAT); land.frustumCulled = false; world.add(land);
+  const land = new THREE.Mesh(g, MAT); land.frustumCulled = false; tg.add(land);
 
-  // The sea: deep teal, with a lighter band where it meets the shore.
-  const sea = new THREE.Mesh(new THREE.PlaneGeometry(16000, 16000), new THREE.MeshLambertMaterial({ color: C.sea }));
-  sea.rotation.x = -Math.PI / 2; sea.position.set((minX + maxX) / 2, -0.06, (minZ + maxZ) / 2); world.add(sea);
+  // The sea, with a lighter band where it meets the shore.
+  sea.position.set((minX + maxX) / 2, -0.06, (minZ + maxZ) / 2);
   const sb = new Builder(), deep = lin(C.sea), light = lin(C.shallows);
   const sc = (ix, iz) => { const t = smooth(0, 90, -MG[iz * NX + ix]); return [lerp(light[0], deep[0], t), lerp(light[1], deep[1], t), lerp(light[2], deep[2], t)]; };
   for (let iz = 0; iz < NZ - 2; iz += 2) for (let ix = 0; ix < NX - 2; ix += 2) {
@@ -466,8 +468,8 @@ const camera = new THREE.PerspectiveCamera(62, W / H, 0.5, 9000);
     for (let k = 0; k < 6; k++) sb.n.push(0, 1, 0);
     sb.c.push(...sc(ix, iz), ...sc(ix, iz + 2), ...sc(ix + 2, iz), ...sc(ix + 2, iz), ...sc(ix, iz + 2), ...sc(ix + 2, iz + 2));
   }
-  const shore = new THREE.Mesh(sb.geo(), MAT); shore.frustumCulled = false; world.add(shore);
-})();
+  const shore = new THREE.Mesh(sb.geo(), MAT); shore.frustumCulled = false; tg.add(shore);
+}
 
 // The sky: pale blue overhead fading to cream at the horizon. It follows the camera.
 const sky = (function buildSky() {
@@ -482,7 +484,7 @@ const sky = (function buildSky() {
 // A point on the road: sample i, metres along, metres to the right, metres up.
 const rp = (i, al, lat, up) => [TX[i] + COS[i] * al - SIN[i] * lat, TY[i] + al * SL[i] - lat * TANB[i] + up, TZ[i] + SIN[i] * al + COS[i] * lat];
 
-(function buildRoad() {
+function buildRoad() {
   const b = new Builder(), d = new Builder();
   const road = lin(C.road), skirt = lin(C.skirt), line = lin(C.line), dash = lin(C.dash), ka = lin(C.kerbA), kb = lin(C.kerbB), dark = lin(C.carDark);
   for (let i = 0; i < N - 1; i++) {
@@ -507,9 +509,9 @@ const rp = (i, al, lat, up) => [TX[i] + COS[i] * al - SIN[i] * lat, TY[i] + al *
     }
   };
   checker(START_S + 3, 2); checker(FINISH_S, 3);
-  const m = new THREE.Mesh(b.geo(), MAT); m.frustumCulled = false; world.add(m);
-  const dm = new THREE.Mesh(d.geo(), DECAL); dm.frustumCulled = false; world.add(dm);
-})();
+  const m = new THREE.Mesh(b.geo(), MAT); m.frustumCulled = false; tg.add(m);
+  const dm = new THREE.Mesh(d.geo(), DECAL); dm.frustumCulled = false; tg.add(dm);
+}
 
 // ---- The figures: the car and everything that stands by the road ---------------------------
 function carGeo(body) {
@@ -613,19 +615,26 @@ const dummy = new THREE.Object3D();
 function instanced(geo, mat, items) { // items: [x, y, z, turn, scale]
   const m = new THREE.InstancedMesh(geo, mat, Math.max(1, items.length));
   items.forEach((it, k) => { dummy.position.set(it[0], it[1], it[2]); dummy.rotation.set(0, it[3], 0); dummy.scale.setScalar(it[4]); dummy.updateMatrix(); m.setMatrixAt(k, dummy.matrix); });
-  m.count = items.length; m.instanceMatrix.needsUpdate = true; m.frustumCulled = false; world.add(m); return m;
+  m.count = items.length; m.instanceMatrix.needsUpdate = true; m.frustumCulled = false; tg.add(m); return m;
 }
 const OBX = [], OBZ = [], OBR = []; // what the car can hit: trunks, rocks, the lighthouse
 const lamps = [];
-(function buildProps() {
-  const place = (geo, s) => { const i = idxAt(s), m = new THREE.Mesh(geo, MAT); m.position.set(TX[i], TY[i], TZ[i]); m.rotation.y = -TH[i]; world.add(m); return m; };
-  const start = place(archGeo('start'), ARCH_S);
+// The figures are made once and stand by every track.
+const GEO = {};
+function geoOf(name, make) { if (!GEO[name]) { GEO[name] = make(); GEO[name].userData.shared = true; } return GEO[name]; }
+function buildProps() {
+  const place = (geo, s) => { // an arch stands across the road, leaning with it where the road is banked
+    const i = idxAt(s), m = new THREE.Mesh(geo, MAT); m.rotation.order = 'YXZ';
+    m.position.set(TX[i], TY[i], TZ[i]); m.rotation.set(Math.atan(TANB[i]), -TH[i], 0); tg.add(m); return m;
+  };
+  OBX.length = OBZ.length = OBR.length = 0; lamps.length = 0;
+  const start = place(geoOf('start', () => archGeo('start')), ARCH_S);
   for (let k = 0; k < 3; k++) { // three lamps count the start down
-    const l = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.12, 8), new THREE.MeshBasicMaterial({ color: '#40302e' }));
+    const l = new THREE.Mesh(geoOf('lamp', () => new THREE.CylinderGeometry(0.42, 0.42, 0.12, 8)), new THREE.MeshBasicMaterial({ color: '#40302e' })); l.userData.own = true;
     l.rotation.z = Math.PI / 2; l.position.set(-0.5, 6.3, (k - 1) * 1.4); start.add(l); lamps.push(l);
   }
-  CP_S.forEach((s, k) => place(archGeo('checkpoint', k + 1), s));
-  place(archGeo('finish'), FINISH_S);
+  CP_S.forEach((s, k) => place(geoOf('cp' + k, () => archGeo('checkpoint', k + 1)), s));
+  place(geoOf('finish', () => archGeo('finish')), FINISH_S);
 
   const posts = [], boards = [];
   for (let i = 4; i < N - 2; i += 10) for (const sd of [-1, 1]) { const p = rp(i, 0, sd * (HW + 1.9), -0.25); posts.push([p[0], p[1], p[2], -TH[i], 1]); }
@@ -633,7 +642,7 @@ const lamps = [];
     const out = -Math.sign(TKS[i]), p = rp(i, 0, out * (HW + 3.4), -0.25);
     boards.push([p[0], p[1], p[2], -TH[i], 1]);
   }
-  instanced(postGeo(), MAT, posts); instanced(boardGeo(), MAT2, boards);
+  instanced(geoOf('post', postGeo), MAT, posts); instanced(geoOf('board', boardGeo), MAT2, boards);
 
   const pines = [], leaves = [], rocks = [];
   const flat = (x, z) => Math.abs(terrainH(x + 4, z) - terrainH(x - 4, z)) + Math.abs(terrainH(x, z + 4) - terrainH(x, z - 4));
@@ -654,10 +663,10 @@ const lamps = [];
     rocks.push([x, stack ? -1 : terrainH(x, z), z, vrand() * 6.28, sc]);
     if (!stack) { OBX.push(x); OBZ.push(z); OBR.push(0.8 * sc); }
   }
-  instanced(pineGeo(), MAT, pines); instanced(leafGeo(), MAT, leaves); instanced(rockGeo(), MAT, rocks);
+  instanced(geoOf('pine', pineGeo), MAT, pines); instanced(geoOf('leaf', leafGeo), MAT, leaves); instanced(geoOf('rock', rockGeo), MAT, rocks);
 
   const e = N - 1, lx = TX[e] + COS[e] * 17, lz = TZ[e] + SIN[e] * 17; // the lighthouse the last straight points at
-  const lh = new THREE.Mesh(lighthouseGeo(), MAT); lh.position.set(lx, terrainH(lx, lz), lz); world.add(lh);
+  const lh = new THREE.Mesh(geoOf('lighthouse', lighthouseGeo), MAT); lh.position.set(lx, Math.max(-1, terrainH(lx, lz)), lz); tg.add(lh);
   OBX.push(lx); OBZ.push(lz); OBR.push(3.3);
 
   const cb = new Builder(), cl = C.cloud.map(lin);
@@ -665,8 +674,9 @@ const lamps = [];
     const a = k / 11 * 6.28 + vrand(), r = 1100 + vrand() * 1500, cx = (minX + maxX) / 2 + Math.cos(a) * r, cz = (minZ + maxZ) / 2 + Math.sin(a) * r, cy = 420 + vrand() * 160;
     for (let j = 0; j < 4; j++) cb.blob(cx + (j - 1.5) * 55 + vrand() * 20, cy + vrand() * 12, cz + vrand() * 40, 70 + vrand() * 50, 11 + vrand() * 6, 45 + vrand() * 25, cl, 0.3);
   }
-  const clouds = new THREE.Mesh(cb.geo(), new THREE.MeshBasicMaterial({ vertexColors: true, fog: false })); clouds.frustumCulled = false; world.add(clouds);
-})();
+  const clouds = new THREE.Mesh(cb.geo(), CLOUD_MAT); clouds.frustumCulled = false; tg.add(clouds);
+}
+const CLOUD_MAT = new THREE.MeshBasicMaterial({ vertexColors: true, fog: false });
 
 const carModel = makeCar(); world.add(carModel.g);
 const shadow = (function () { // the car's shadow stays on the ground, so a jump reads as a jump
@@ -741,26 +751,48 @@ const car = { x: 0, y: 0, z: 0, h: 0, vx: 0, vz: 0, vy: 0, vf: 0, vl: 0, steer: 
 const cam = { yaw: 0, cy: 0, x: 0, y: 0, z: 0, lx: 0, ly: 0, lz: 0, fov: 62, px: 0, py: 0, pz: 0, plx: 0, ply: 0, plz: 0, pfov: 62, shake: 0, blend: 0 };
 let scene, state, best = null, runs = 0, MED = [0, 0, 0, 0], PAR = 0;
 const learned = { brake: false, drift: false };
-const SAVE_KEY = 'trackmanus.best.' + Math.round(LEN);
-try { const v = JSON.parse(localStorage.getItem(SAVE_KEY)); if (v && isFinite(v.time) && Array.isArray(v.splits)) best = v; } catch (e) { best = null; }
-function save() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(best)); } catch (e) { /* a browser that will not store keeps the best for this sitting */ } }
+// Each track keeps its own best run. The first track's key is the one it had when it was the only track.
+const saveKey = i => 'trackmanus.best.' + (i ? TRACKS[i].id + '.' : '') + Math.round(LAID[i].LEN);
+const BESTS = LAID.map((L, i) => {
+  try { const v = JSON.parse(localStorage.getItem(saveKey(i))); if (v && isFinite(v.time) && Array.isArray(v.splits)) return v; } catch (e) { /* nothing kept */ }
+  return null;
+});
+function save() { BESTS[cur] = best; try { localStorage.setItem(saveKey(cur), JSON.stringify(best)); } catch (e) { /* a browser that will not store keeps the best for this sitting */ } }
 
 const MEDALS = [{ n: 'No medal', c: '#7c8791' }, { n: 'Bronze', c: '#d1915f' }, { n: 'Silver', c: '#d5dce2' }, { n: 'Gold', c: '#f2c230' }, { n: 'Author', c: '#49c4b4' }];
-function medalTimes() { // an estimate of a clean run from the track and the car, and each medal as a share of it
-  const i0 = idxAt(START_S), i1 = idxAt(FINISH_S), v = new Float64Array(N);
-  for (let i = i0; i <= i1; i++) { const k = Math.abs(TKS[i]); v[i] = Math.min(tune.topSpeed, k > 1e-5 ? Math.sqrt(tune.latGrip / k) : 1e9); }
-  for (let i = i1 - 1; i >= i0; i--) v[i] = Math.min(v[i], Math.sqrt(v[i + 1] * v[i + 1] + 2 * tune.brake * (TS[i + 1] - TS[i])));
-  v[i0] = Math.min(v[i0], 1); let t = 0;
-  for (let i = i0; i < i1; i++) {
-    const ds = TS[i + 1] - TS[i], a = tune.accel * Math.max(0, 1 - v[i] / tune.topSpeed);
-    v[i + 1] = Math.min(v[i + 1], Math.sqrt(v[i] * v[i] + 2 * a * ds)); t += 2 * ds / (v[i] + v[i + 1]);
+function medalTimes() { // for every track: an estimate of a clean run from the road and the car, and each medal as a share of it
+  for (const L of LAID) {
+    const ts = L.TS, i0 = idxIn(ts, START_S), i1 = idxIn(ts, L.FINISH_S), v = new Float64Array(L.N);
+    for (let i = i0; i <= i1; i++) { const k = Math.abs(L.TKS[i]); v[i] = Math.min(tune.topSpeed, k > 1e-5 ? Math.sqrt(tune.latGrip / k) : 1e9); }
+    for (let i = i1 - 1; i >= i0; i--) v[i] = Math.min(v[i], Math.sqrt(v[i + 1] * v[i + 1] + 2 * tune.brake * (ts[i + 1] - ts[i])));
+    v[i0] = Math.min(v[i0], 1); let t = 0;
+    for (let i = i0; i < i1; i++) {
+      const ds = ts[i + 1] - ts[i], a = tune.accel * Math.max(0, 1 - v[i] / tune.topSpeed);
+      v[i + 1] = Math.min(v[i + 1], Math.sqrt(v[i] * v[i] + 2 * a * ds)); t += 2 * ds / (v[i] + v[i + 1]);
+    }
+    L.par = t; L.med = [t * tune.medalBronze, t * tune.medalSilver, t * tune.medalGold, t * tune.medalAuthor];
   }
-  PAR = t; MED = [t * tune.medalBronze, t * tune.medalSilver, t * tune.medalGold, t * tune.medalAuthor];
+  PAR = LAID[cur].par; MED = LAID[cur].med;
 }
-const medalFor = t => t <= MED[3] ? 4 : t <= MED[2] ? 3 : t <= MED[1] ? 2 : t <= MED[0] ? 1 : 0;
+const medalOf = (t, med) => t <= med[3] ? 4 : t <= med[2] ? 3 : t <= med[1] ? 2 : t <= med[0] ? 1 : 0;
+const medalFor = t => medalOf(t, MED);
 function fmt(t) { const ms = Math.floor(t * 1000 + 1e-6), m = Math.floor(ms / 60000), s = Math.floor(ms / 1000) % 60; return `${m}:${String(s).padStart(2, '0')}.${String(ms % 1000).padStart(3, '0')}`; }
 function fmtD(d) { return (d < 0 ? '-' : '+') + Math.abs(d).toFixed(3); }
 
+function loadTrack(i) { // another track: its land, its road and everything that stands by it
+  const t0 = performance.now();
+  useTrack(i); buildGround();
+  lamps.forEach(l => l.material.dispose());
+  for (const o of tg.children) { if (o.geometry && !o.geometry.userData.shared) o.geometry.dispose(); if (o.isInstancedMesh) o.dispose(); }
+  tg.clear();
+  vseed = 20261117 + i * 7919; // a track's scenery is the same every time it is loaded
+  buildLand(); buildRoad(); buildProps();
+  markN = markHead = 0; markGeo.setDrawRange(0, 0); lastMark[0] = lastMark[1] = null; // a new road starts spotless
+  for (const p of puffs) p.life = 0;
+  best = BESTS[i]; PAR = LAID[i].par; MED = LAID[i].med;
+  try { localStorage.setItem('trackmanus.track', TRACKS[i].id); } catch (e) { /* the first track next time */ }
+  events.push({ type: 'track', track: i + 1, ms: Math.round(performance.now() - t0) });
+}
 function placeCar(s, lat = 0) {
   const i = idxAt(s), c = car;
   c.x = TX[i] - SIN[i] * lat; c.z = TZ[i] + COS[i] * lat; c.y = TY[i] - lat * TANB[i]; c.h = TH[i]; c.vx = c.vz = c.vy = c.vf = c.vl = 0; c.steer = c.drift = c.slip = 0;
@@ -794,7 +826,7 @@ function respawn() {
 }
 function checkpoint(t) {
   const k = state.cp, b = best && best.splits[k] != null ? best.splits[k] : null, d = b == null ? null : t - b;
-  const fb = net.live && net.them.splits[k] > 0 ? net.them.splits[k] : null;
+  const fb = net.live && net.them.bt === cur && net.them.splits[k] > 0 ? net.them.splits[k] : null;
   state.splits.push(t); state.split = { k, t, d, dv: fb == null ? null : t - fb, life: 3 }; state.cp++;
   if (d == null) tone(660, 0.18, 'triangle', 0.3); else if (d <= 0) { tone(660, 0.12, 'triangle', 0.3); tone(990, 0.2, 'triangle', 0.3, 0.1); } else { tone(520, 0.12, 'triangle', 0.3); tone(415, 0.22, 'triangle', 0.3, 0.1); }
   events.push({ type: 'checkpoint', cp: k + 1, time: t, delta: d });
@@ -915,7 +947,7 @@ function camStep(dt, snap) {
 // The first handshake goes through the public PeerJS service (vendor/peerjs.min.js, loaded only
 // when a room is opened or joined); after it the two browsers send to each other directly.
 const net = { role: '', code: '', peer: null, conn: null, live: false, status: '', name: '', tick: 0, lastGo: 0, myLast: null, flash: '', flashT: 0,
-  them: { name: 'Friend', best: null, last: null, splits: [], cp: 0, phase: '', scene: '', time: 0, seen: 0 }, buf: [] };
+  them: { name: 'Friend', best: null, last: null, splits: [], cp: 0, phase: '', scene: '', time: 0, seen: 0, tr: 0, bt: 0 }, buf: [] }; // tr: the track they are on; bt: the track their best is for
 const ROOM = 'trackmanus-room-', el = id => document.getElementById(id);
 const num = v => (typeof v === 'number' && isFinite(v)) ? v : 0;
 const cleanName = v => String(v == null ? '' : v).replace(/[^\p{L}\p{N} _.-]/gu, '').trim().slice(0, 12);
@@ -985,19 +1017,20 @@ function netLost() {
   if (net.role !== 'host') netClose();
 }
 function netSend(o) { if (net.live && net.conn && net.conn.open) { try { net.conn.send(o); } catch (e) { /* a dropped message is replaced by the next */ } } }
-function netInfo() { netSend({ k: 'i', name: net.name || 'Player', best: best ? best.time : null, splits: best ? best.splits : [], last: net.myLast }); }
+function netInfo() { netSend({ k: 'i', name: net.name || 'Player', best: best ? best.time : null, splits: best ? best.splits : [], last: net.myLast, tr: cur }); }
+const trackNo = v => clamp(num(v) | 0, 0, TRACKS.length - 1);
 function netData(d) { // everything from the other browser is checked before it is used
   if (!d || typeof d !== 'object') return;
   const T = net.them; T.seen = clock.now();
   if (d.k === 's') {
     net.buf.push({ at: clock.now(), x: num(d.x), y: num(d.y), z: num(d.z), h: num(d.h), p: num(d.p), r: num(d.r), st: clamp(num(d.st), -1, 1), v: clamp(num(d.v), -200, 200) });
     if (net.buf.length > 40) net.buf.shift();
-    T.cp = clamp(num(d.cp) | 0, 0, 9); T.phase = String(d.ph || '').slice(0, 8); T.scene = String(d.sc || '').slice(0, 8); T.time = num(d.t);
+    T.cp = clamp(num(d.cp) | 0, 0, 9); T.phase = String(d.ph || '').slice(0, 8); T.scene = String(d.sc || '').slice(0, 8); T.time = num(d.t); T.tr = trackNo(d.tr);
   } else if (d.k === 'i') {
     T.name = cleanName(d.name) || 'Friend'; T.best = num(d.best) > 0 ? num(d.best) : null; T.last = num(d.last) > 0 ? num(d.last) : null;
-    T.splits = Array.isArray(d.splits) ? d.splits.slice(0, 8).map(num) : [];
+    T.splits = Array.isArray(d.splits) ? d.splits.slice(0, 8).map(num) : []; T.bt = trackNo(d.tr);
     if (net.live) netStatus('Connected to ' + T.name + '. Either of you can start the race.');
-  } else if (d.k === 'go' && num(d.id) && d.id !== net.lastGo) { net.lastGo = d.id; goTogether(false); }
+  } else if (d.k === 'go' && num(d.id) && d.id !== net.lastGo) { net.lastGo = d.id; goTogether(false, trackNo(d.tr)); }
 }
 function netStep() { // 20 times a second: where this car is; every 3 s: the name and best time again
   if (net.flashT > 0) net.flashT -= STEP;
@@ -1005,13 +1038,14 @@ function netStep() { // 20 times a second: where this car is; every 3 s: the nam
   net.tick++;
   if (net.tick % 3 === 0) {
     const c = car, r3 = v => Math.round(v * 1000) / 1000;
-    netSend({ k: 's', x: r3(c.x), y: r3(c.y), z: r3(c.z), h: r3(c.h), p: r3(c.pitch), r: r3(c.roll), st: r3(c.steer), v: r3(c.vf), cp: state.cp, ph: state.phase, sc: scene, t: r3(state.phase === 'done' ? state.finish : state.time) });
+    netSend({ k: 's', x: r3(c.x), y: r3(c.y), z: r3(c.z), h: r3(c.h), p: r3(c.pitch), r: r3(c.roll), st: r3(c.steer), v: r3(c.vf), cp: state.cp, ph: state.phase, sc: scene, t: r3(state.phase === 'done' ? state.finish : state.time), tr: cur });
   }
   if (net.tick % 180 === 0) netInfo();
 }
-function goTogether(mine) { // both cars back on the line, on the same count
-  if (mine) { if (!net.live) return; net.lastGo = 1 + Math.floor(clock.now() * 1000) % 1e9; netSend({ k: 'go', id: net.lastGo }); }
-  closeLobby(); restart(true);
+function goTogether(mine, tr) { // both cars on the line of the same track, on the same count: the track is the starter's
+  if (mine) { if (!net.live) return; net.lastGo = 1 + Math.floor(clock.now() * 1000) % 1e9; netSend({ k: 'go', id: net.lastGo, tr: cur }); }
+  else if (tr !== cur) loadTrack(tr);
+  net.myLast = null; closeLobby(); restart(true); netInfo(); // and each tells the other their best on it
 }
 function rivalPose(t) { // where their car was a moment ago, eased between the last messages
   const b = net.buf, n = b.length; if (!n) return null;
@@ -1048,6 +1082,19 @@ el('lb-copy').onclick = () => {
 // ---- Scenes ---------------------------------------------------------------------------
 const keyThr = () => down.has('ArrowUp') || down.has('KeyW');
 const keyBrk = () => down.has('ArrowDown') || down.has('KeyS');
+const PCOLS = 5;
+let pick = 0; // the picker: the card under the cursor
+function openTracks() { reset(); pick = cur; scene = 'tracks'; }
+function drawMap(L, x, y, w, h, c) { // a track from above, north up, fitted to a box
+  const k = Math.min(w / Math.max(1, L.maxX - L.minX), h / Math.max(1, L.maxZ - L.minZ));
+  const ox = x + (w - (L.maxX - L.minX) * k) / 2 - L.minX * k, oz = y + (h - (L.maxZ - L.minZ) * k) / 2 - L.minZ * k, e = L.N - 1;
+  ctx.strokeStyle = c; ctx.lineWidth = 3; ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.beginPath();
+  for (let i = 0; i < e; i += 3) ctx.lineTo(ox + L.TX[i] * k, oz + L.TZ[i] * k);
+  ctx.lineTo(ox + L.TX[e] * k, oz + L.TZ[e] * k); ctx.stroke();
+  ctx.fillStyle = C.car; ctx.fillRect(ox + L.TX[0] * k - 4.5, oz + L.TZ[0] * k - 4.5, 9, 9);               // the start: orange
+  const fx = ox + L.TX[e] * k - 4.5, fz = oz + L.TZ[e] * k - 4.5;                                           // the finish: chequered
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(fx, fz, 9, 9); ctx.fillStyle = '#16242e'; ctx.fillRect(fx, fz, 4.5, 4.5); ctx.fillRect(fx + 4.5, fz + 4.5, 4.5, 4.5);
+}
 const keySteer = () => ((down.has('ArrowRight') || down.has('KeyD')) ? 1 : 0) - ((down.has('ArrowLeft') || down.has('KeyA')) ? 1 : 0);
 const scenes = {
   figures: {
@@ -1066,6 +1113,7 @@ const scenes = {
     update(dt) {
       state.t += dt;
       if (pressed('KeyF')) openLobby(); else if (pressed('KeyG') && net.live) goTogether(true);
+      else if (pressed('KeyT')) openTracks();
       else if (pressed('Enter') || pressed('Space')) restart(true);
     },
     draw() {
@@ -1074,14 +1122,51 @@ const scenes = {
       ctx.fillStyle = 'rgba(29,31,36,0.82)'; // a tyre mark under a clean title: clean, but not always
       ctx.beginPath(); ctx.moveTo(84, 196); ctx.bezierCurveTo(300, 184, 520, 214, 760, 192); ctx.lineTo(756, 204); ctx.bezierCurveTo(520, 226, 300, 198, 86, 208); ctx.closePath(); ctx.fill();
       text(TITLE.toUpperCase(), 76, 132, 104, '#16242e', 'left', 800, true);
-      text('One car, one clifftop road, and a clock.', 1220, 204, 22, '#16242e', 'right', 600);
+      text('One car, twenty clifftop roads, and a clock.', 1220, 204, 22, '#16242e', 'right', 600);
       plate(76, 262, 470, 262);
       CONTROLS.forEach((c, i) => text(c, 104, 300 + i * 37, 23, '#ffffff', 'left', 500));
       plate(76, 560, 300, 60, 'rgba(255,90,31,0.94)'); text('Enter to start', 226, 590, 28, '#16242e', 'center', 700);
-      if (best) { plate(400, 560, 330, 60); medalIcon(432, 598, 13, medalFor(best.time)); text('Best ' + fmt(best.time), 462, 590, 26, '#ffffff', 'left'); }
+      plate(400, 560, 470, 60); text(`T: track ${cur + 1} of ${TRACKS.length} · ${TRACKS[cur].name}`, 635, 590, 24, '#ffffff', 'center', 600);
+      if (best) { plate(894, 560, 310, 60); medalIcon(926, 598, 13, medalFor(best.time)); text('Best ' + fmt(best.time), 956, 590, 26, '#ffffff', 'left'); }
       plate(76, 634, 300, 56); text('F: race a friend', 226, 662, 24, '#ffffff', 'center', 600);
       if (net.live) { plate(400, 634, 470, 56, 'rgba(18,74,44,0.92)'); text(`${net.them.name} is here.  G: start together`, 635, 662, 24, '#8df0a8', 'center', 600); }
       else if (net.role === 'host' && net.peer && net.peer.open) { plate(400, 634, 470, 56); text(`Room ${net.code} is open, waiting`, 635, 662, 24, '#ffffff', 'center', 600); }
+      drawFlash();
+    },
+  },
+  tracks: { // twenty cards: the arrows move, Enter races the one picked
+    update(dt) {
+      state.t += dt;
+      const n = TRACKS.length, col = pick % PCOLS, row = (pick / PCOLS) | 0, rows = Math.ceil(n / PCOLS);
+      let c = col, r = row;
+      if (pressed('ArrowRight') || pressed('KeyD')) c = (col + 1) % PCOLS;
+      if (pressed('ArrowLeft') || pressed('KeyA')) c = (col + PCOLS - 1) % PCOLS;
+      if (pressed('ArrowDown') || pressed('KeyS')) r = (row + 1) % rows;
+      if (pressed('ArrowUp') || pressed('KeyW')) r = (row + rows - 1) % rows;
+      if (c !== col || r !== row) { pick = Math.min(n - 1, r * PCOLS + c); tone(520, 0.05, 'triangle', 0.15); }
+      if (pressed('Enter') || pressed('Space')) { // the road is laid in a few hundredths of a second
+        if (pick !== cur) loadTrack(pick);
+        if (net.live) goTogether(true); else restart(true);
+      } else if (pressed('Escape') || pressed('KeyT')) scene = 'title';
+    },
+    draw() {
+      drawWorld(); plate(0, 0, W, H, 'rgba(16,28,38,0.88)', 0);
+      text('Pick a track', 36, 44, 40, '#ffffff', 'left', 800, true);
+      text(`Arrows: move    Enter: ${net.live ? 'both race it' : 'race it'}    Esc: back`, W - 36, 46, 22, '#d7dee4', 'right', 500);
+      TRACKS.forEach((t, i) => {
+        const L = LAID[i], x = 36 + (i % PCOLS) * 244, y = 84 + ((i / PCOLS) | 0) * 154, w = 232, hh = 142, on = i === pick, b = BESTS[i];
+        if (on) plate(x - 4, y - 4, w + 8, hh + 8, '#ff5a1f', 13);
+        plate(x, y, w, hh, on ? '#2c4250' : 'rgba(40,58,70,0.92)');
+        text(String(i + 1).padStart(2, '0'), 14 + x, y + 24, 20, on ? '#ff8a5c' : '#9fb0bd', 'left', 800);
+        text(t.name, x + 46, y + 24, 20, '#ffffff', 'left', 700);
+        drawMap(L, x + 14, y + 46, 100, 84, on ? '#ffffff' : '#d7dee4');
+        text((L.LEN / 1000).toFixed(2) + ' km', x + 128, y + 58, 18, '#d7dee4', 'left', 500);
+        if (b) {
+          const m = medalOf(b.time, L.med);
+          text(fmt(b.time), x + 128, y + 86, 18, '#ffffff', 'left', 700);
+          medalIcon(x + 137, y + 120, 9, m); text(m ? MEDALS[m].n : 'No medal', x + 152, y + 114, 17, MEDALS[m].c, 'left', 600);
+        } else text('not driven', x + 128, y + 86, 18, '#8d9aa5', 'left', 500);
+      });
       drawFlash();
     },
   },
@@ -1144,12 +1229,13 @@ const scenes = {
       state.t += dt;
       if (pressed('KeyR') || pressed('Enter')) { restart(false); return; }
       if (pressed('KeyG') && net.live) { goTogether(true); return; }
+      if (pressed('KeyT')) { openTracks(); return; }
       carStep(dt, false, car.vf > 0.5, 0, false); camStep(dt, false); mirror(); // the car rolls to a stop past the line
     },
     draw() {
       drawWorld();
       const x = 340, y = 96, w = 600, h = 528; plate(x, y, w, h, 'rgba(16,28,38,0.86)', 14);
-      text('FINISH', W / 2, y + 44, 24, '#d7dee4', 'center', 700);
+      text('FINISH · ' + TRACKS[cur].name.toUpperCase(), W / 2, y + 44, 24, '#d7dee4', 'center', 700);
       text(fmt(state.finish), W / 2, y + 112, 84, '#ffffff', 'center', 700);
       const m = state.medal; medalIcon(W / 2 - 110, y + 208, 22, m);
       text(m ? MEDALS[m].n + ' medal' : 'No medal yet', W / 2 - 74, y + 196, 34, MEDALS[m].c, 'left', 700);
@@ -1161,9 +1247,9 @@ const scenes = {
       if (nx) { medalIcon(W / 2 - 150, y + 434, 13, nx); text(`Next: ${MEDALS[nx].n} at ${fmt(MED[nx - 1])}`, W / 2 - 124, y + 426, 24, '#ffffff', 'left'); }
       else text('Every medal won', W / 2, y + 426, 24, '#ffffff');
       if (net.live) {
-        const T = net.them; text(`${T.name}: ${T.best ? 'best ' + fmt(T.best) : 'no time yet'}${T.last ? ', last ' + fmt(T.last) : ''}`, W / 2, y + 392, 22, '#9fd0ff');
-        plate(x + 90, y + 458, 420, 50, 'rgba(255,90,31,0.94)'); text('R: again    G: both start together', W / 2, y + 483, 24, '#16242e', 'center', 700);
-      } else { plate(x + 150, y + 458, 300, 50, 'rgba(255,90,31,0.94)'); text('R or Enter: again', W / 2, y + 483, 24, '#16242e', 'center', 700); }
+        const T = net.them, here = T.bt === cur; text(`${T.name}: ${here && T.best ? 'best ' + fmt(T.best) : 'no time yet'}${here && T.last ? ', last ' + fmt(T.last) : ''}`, W / 2, y + 392, 22, '#9fd0ff');
+        plate(x + 60, y + 458, 480, 50, 'rgba(255,90,31,0.94)'); text('R: again    G: both again    T: tracks', W / 2, y + 483, 24, '#16242e', 'center', 700);
+      } else { plate(x + 90, y + 458, 420, 50, 'rgba(255,90,31,0.94)'); text('R or Enter: again    T: tracks', W / 2, y + 483, 24, '#16242e', 'center', 700); }
       drawFlash();
     },
   },
@@ -1184,7 +1270,7 @@ function drawWorld() {
   puffs.forEach((p, i) => { const s = p.life > 0 ? p.s * Math.min(1, p.life * 3) : 0; dummy.position.set(p.x, p.y, p.z); dummy.rotation.set(0, 0, 0); dummy.scale.setScalar(s); dummy.updateMatrix(); puffMesh.setMatrixAt(i, dummy.matrix); });
   puffMesh.instanceMatrix.needsUpdate = true;
   // a friend's car, a tenth of a second behind what they sent, so it moves smoothly
-  const now = clock.now(), rp2 = net.live && net.buf.length && now - net.buf[net.buf.length - 1].at < 2 ? rivalPose(now - 0.1) : null;
+  const now = clock.now(), rp2 = net.live && net.them.tr === cur && net.buf.length && now - net.buf[net.buf.length - 1].at < 2 ? rivalPose(now - 0.1) : null;
   rival.pose = rp2; rival.g.visible = rival.shadow.visible = !!rp2;
   if (rp2) {
     rival.spin += rp2.v * Math.min(0.1, Math.max(0, now - rival.lastT)) / 0.36;
@@ -1198,7 +1284,7 @@ function drawWorld() {
   // the camera: behind the car in play; a still look down the road on the title
   let cx = lerp(cam.px, cam.x, a), cy = lerp(cam.py, cam.y, a), cz = lerp(cam.pz, cam.z, a);
   let lx = lerp(cam.plx, cam.lx, a), ly = lerp(cam.ply, cam.ly, a), lz = lerp(cam.plz, cam.lz, a), fov = lerp(cam.pfov, cam.fov, a);
-  const b = scene === 'title' ? 1 : cam.blend * cam.blend * (3 - 2 * cam.blend);
+  const b = scene === 'title' || scene === 'tracks' ? 1 : cam.blend * cam.blend * (3 - 2 * cam.blend);
   if (b > 0) {
     const fx = Math.cos(c.h), fz = Math.sin(c.h), tx = c.x - fx * 10 + fz * 4.6, tz = c.z - fz * 10 - fx * 4.6, ty = c.y + 3.8;
     cx = lerp(cx, tx, b); cy = lerp(cy, ty, b); cz = lerp(cz, tz, b);
@@ -1210,7 +1296,7 @@ function drawWorld() {
   camera.position.set(cx, cy, cz); camera.fov = fov; camera.updateProjectionMatrix(); camera.lookAt(lx, ly, lz);
   sky.position.copy(camera.position);
   const n = state.phase === 'count' ? state.countN : 3; // the start lamps: red, red, red, then green
-  lamps.forEach((l, i) => l.material.color.set(scene === 'title' ? '#40302e' : n >= 3 ? (state.go > 0 ? '#3ecf6a' : '#40302e') : (i <= n ? '#e23b2e' : '#40302e')));
+  lamps.forEach((l, i) => l.material.color.set(scene === 'title' || scene === 'tracks' ? '#40302e' : n >= 3 ? (state.go > 0 ? '#3ecf6a' : '#40302e') : (i <= n ? '#e23b2e' : '#40302e')));
   renderer.render(world, camera);
   ctx.drawImage(glCanvas, 0, 0, W, H);
 }
@@ -1236,9 +1322,9 @@ function drawRival() {
     }
   }
   plate(16, 80, 280, 84, 'rgba(22,62,110,0.85)');
-  text(T.name, 34, 104, 22, '#ffffff', 'left', 700); text(T.best ? fmt(T.best) : 'no time yet', 280, 104, 22, '#ffffff', 'right', 600);
+  text(T.name, 34, 104, 22, '#ffffff', 'left', 700); text(T.bt === cur && T.best ? fmt(T.best) : 'no time yet', 280, 104, 22, '#ffffff', 'right', 600);
   const on = clock.now() - T.seen < 3;
-  const what = !on ? 'lost touch' : T.scene === 'results' ? 'finished ' + (T.last ? fmt(T.last) : '') : T.scene === 'title' ? 'at the title' : T.phase === 'count' ? 'on the line' : T.cp ? 'past checkpoint ' + T.cp : 'on the first stretch';
+  const what = !on ? 'lost touch' : T.tr !== cur ? 'on track ' + (T.tr + 1) : T.scene === 'tracks' ? 'picking a track' : T.scene === 'results' ? 'finished ' + (T.last ? fmt(T.last) : '') : T.scene === 'title' ? 'at the title' : T.phase === 'count' ? 'on the line' : T.cp ? 'past checkpoint ' + T.cp : 'on the first stretch';
   text(what, 34, 140, 20, on ? '#cfe4ff' : '#ffb0a3', 'left', 500);
 }
 function drawHud() {
@@ -1274,12 +1360,12 @@ function drawHud() {
   } else if (state.go > 0) { plate(540, 236, 200, 150, 'rgba(18,74,44,0.9)'); text('GO', W / 2, 314, 110, '#8df0a8', 'center', 800); }
   else if (state.sunk > 0) hint('Into the sea: back to the last checkpoint');
   else if (state.phase === 'run') {
-    const next = state.cp < CP_S.length ? CP_S[state.cp] : FINISH_S;
+    const next = state.cp < CP_S.length ? CP_S[state.cp] : FINISH_S, HB = LAID[cur].HB, HD = LAID[cur].HD;
     if (car.s > next + 14 && state.cp < CP_S.length) hint(`Missed checkpoint ${state.cp + 1}   C: go back to the last one`);
     else if (state.wrong > 1.2) hint('Wrong way');
     else if (state.offT > 2) hint('C: back to the last checkpoint   R: restart');
-    else if (!learned.brake && car.s > PS[3] - 110 && car.s < PS[3] && car.vf > 44) hint('Down or S: brake for the bend');
-    else if (!learned.drift && car.s > PS[5] - 130 && car.s < PE[5]) hint('Hold Space to drift through the hairpin');
+    else if (!learned.brake && HB >= 0 && car.s > PS[HB] - 110 && car.s < PS[HB] && car.vf > 44) hint('Down or S: brake for the bend');
+    else if (!learned.drift && HD >= 0 && car.s > PS[HD] - 130 && car.s < PE[HD]) hint('Hold Space to drift through the hairpin');
   }
 }
 function hint(s) { const w = s.length * 13.5 + 40; plate(W / 2 - w / 2, 560, w, 50); text(s, W / 2, 585, 26, '#ffffff'); }
@@ -1310,6 +1396,7 @@ window.game = {
   press(code) { hit.add(code); },
   hold(code, on) { on ? down.add(code) : down.delete(code); },
   get events() { return events; }, // the loop steps; a check empties it
+  get track() { return cur + 1; }, // 1 to 20; ?track=N opens on track N
   get net() { return { live: net.live, role: net.role, code: net.code, status: net.status, them: net.them, got: net.buf.length }; },
   step(n = 1, draw = true, alpha = 1) {
     for (let i = 0; i < n; i++) step();
@@ -1318,6 +1405,12 @@ window.game = {
 };
 
 medalTimes();
+{ // the track last driven, or the one a link asks for
+  let first = 0;
+  try { first = Math.max(0, TRACKS.findIndex(t => t.id === localStorage.getItem('trackmanus.track'))); } catch (e) { first = 0; }
+  const q = Number(params.get('track')); if (q >= 1 && q <= TRACKS.length && q === Math.floor(q)) first = q - 1;
+  loadTrack(first);
+}
 reset();
 scene = params.get('scene') || 'title';
 if (!scenes[scene]) scene = 'title';
