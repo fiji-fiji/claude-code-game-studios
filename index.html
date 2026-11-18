@@ -1085,7 +1085,7 @@ const keyBrk = () => down.has('ArrowDown') || down.has('KeyS');
 const PCOLS = 5;
 let pick = 0; // the picker: the card under the cursor
 function openTracks() { reset(); pick = cur; scene = 'tracks'; }
-function drawMap(L, x, y, w, h, c) { // a track from above, north up, fitted to a box
+function drawMap(L, x, y, w, h, c) { // a track from above, north up, fitted to a box; returns the scale and the offsets it used
   const k = Math.min(w / Math.max(1, L.maxX - L.minX), h / Math.max(1, L.maxZ - L.minZ));
   const ox = x + (w - (L.maxX - L.minX) * k) / 2 - L.minX * k, oz = y + (h - (L.maxZ - L.minZ) * k) / 2 - L.minZ * k, e = L.N - 1;
   ctx.strokeStyle = c; ctx.lineWidth = 3; ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.beginPath();
@@ -1094,6 +1094,7 @@ function drawMap(L, x, y, w, h, c) { // a track from above, north up, fitted to 
   ctx.fillStyle = C.car; ctx.fillRect(ox + L.TX[0] * k - 4.5, oz + L.TZ[0] * k - 4.5, 9, 9);               // the start: orange
   const fx = ox + L.TX[e] * k - 4.5, fz = oz + L.TZ[e] * k - 4.5;                                           // the finish: chequered
   ctx.fillStyle = '#ffffff'; ctx.fillRect(fx, fz, 9, 9); ctx.fillStyle = '#16242e'; ctx.fillRect(fx, fz, 4.5, 4.5); ctx.fillRect(fx + 4.5, fz + 4.5, 4.5, 4.5);
+  return [k, ox, oz];
 }
 const keySteer = () => ((down.has('ArrowRight') || down.has('KeyD')) ? 1 : 0) - ((down.has('ArrowLeft') || down.has('KeyA')) ? 1 : 0);
 const scenes = {
@@ -1327,39 +1328,22 @@ function drawRival() {
   const what = !on ? 'lost touch' : T.tr !== cur ? 'on track ' + (T.tr + 1) : T.scene === 'tracks' ? 'picking a track' : T.scene === 'results' ? 'finished ' + (T.last ? fmt(T.last) : '') : T.scene === 'title' ? 'at the title' : T.phase === 'count' ? 'on the line' : T.cp ? 'past checkpoint ' + T.cp : 'on the first stretch';
   text(what, 34, 140, 20, on ? '#cfe4ff' : '#ffb0a3', 'left', 500);
 }
-function drawMini() { // the road from above, turning with the view so what comes next is always up: a bend shows before it arrives
-  const x0 = 16, y0 = 424, w = 216, h = 216, a = ALPHA, c = car;
-  const px = lerp(c.px, c.x, a), pz = lerp(c.pz, c.z, a), yaw = cam.yaw, co = Math.cos(yaw), si = Math.sin(yaw);
-  const k = h * 0.72 / tune.mapRange, ax = x0 + w / 2, ay = y0 + h * 0.8; // the car sits low in the box: most of it is road to come
-  const sx = (x, z) => ax + (-(x - px) * si + (z - pz) * co) * k, sy = (x, z) => ay - ((x - px) * co + (z - pz) * si) * k;
+function drawMini() { // the whole course from above, north up: where you are on it, and every bend still to come
+  const x0 = 16, y0 = 424, w = 216, h = 216, a = ALPHA, c = car, L = LAID[cur];
   plate(x0, y0, w, h);
-  ctx.save(); ctx.beginPath(); ctx.rect(x0 + 4, y0 + 4, w - 8, h - 8); ctx.clip();
-  const reach = tune.mapRange * 1.6, lw = Math.max(5, HW * 2 * k);
-  const road = (i0, i1, col) => {
-    ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.beginPath();
-    let pen = false;
-    for (let i = i0; i <= i1; i++) {
-      const dx = TX[i] - px, dz = TZ[i] - pz;
-      if (dx * dx + dz * dz > reach * reach) { pen = false; continue; }
-      const X = sx(TX[i], TZ[i]), Y = sy(TX[i], TZ[i]);
-      if (pen) ctx.lineTo(X, Y); else { ctx.moveTo(X, Y); pen = true; }
-    }
-    ctx.stroke();
-  };
-  road(0, N - 1, 'rgba(215,222,228,0.38)');                                              // every part of the road near here, faint
-  road(c.idx, idxAt(Math.min(LEN, TS[c.idx] + tune.mapRange * 1.3)) + 1, '#ffffff');     // what comes next, bright
-  const across = (s, draw) => { const i = idxAt(s); ctx.save(); ctx.translate(sx(TX[i], TZ[i]), sy(TX[i], TZ[i])); ctx.rotate(TH[i] - yaw); draw(); ctx.restore(); };
-  for (let q = state.cp; q < CP_S.length; q++) across(CP_S[q], () => { ctx.fillStyle = C.arch; ctx.fillRect(-lw * 0.9, -3, lw * 1.8, 6); }); // the arches still to come
-  across(FINISH_S, () => { for (let q = 0; q < 4; q++) { ctx.fillStyle = q % 2 ? '#16242e' : '#ffffff'; ctx.fillRect(-lw * 0.9 + q * lw * 0.45, -3.5, lw * 0.45, 7); } });
-  const arrow = (X, Y, turn, col) => { // a car: a dart pointing the way it faces
-    ctx.save(); ctx.translate(X, Y); ctx.rotate(turn);
+  const [k, ox, oz] = drawMap(L, x0 + 16, y0 + 16, w - 32, h - 32, 'rgba(215,222,228,0.4)'); // the road already driven stays faint
+  ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 3; ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.beginPath(); // the road to come is bright
+  for (let i = c.idx; i < N; i += 2) ctx.lineTo(ox + TX[i] * k, oz + TZ[i] * k);
+  ctx.lineTo(ox + TX[N - 1] * k, oz + TZ[N - 1] * k); ctx.stroke();
+  for (let q = state.cp; q < CP_S.length; q++) { const i = idxAt(CP_S[q]); ctx.fillStyle = C.arch; ctx.fillRect(ox + TX[i] * k - 3.5, oz + TZ[i] * k - 3.5, 7, 7); } // the arches still to come
+  const arrow = (x, z, turn, col) => { // a car: a dart pointing the way it faces
+    ctx.save(); ctx.translate(clamp(ox + x * k, x0 + 8, x0 + w - 8), clamp(oz + z * k, y0 + 8, y0 + h - 8)); ctx.rotate(turn + Math.PI / 2);
     ctx.fillStyle = '#16242e'; ctx.beginPath(); ctx.moveTo(0, -12); ctx.lineTo(9, 9); ctx.lineTo(0, 4.5); ctx.lineTo(-9, 9); ctx.closePath(); ctx.fill();
     ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(0, -8.5); ctx.lineTo(6, 6); ctx.lineTo(0, 2.5); ctx.lineTo(-6, 6); ctx.closePath(); ctx.fill();
     ctx.restore();
   };
-  const p = rival.pose; if (p) arrow(sx(p.x, p.z), sy(p.x, p.z), p.h - yaw, C.rival);
-  arrow(ax, ay, c.ph + angDiff(c.h, c.ph) * a - yaw, C.car);
-  ctx.restore();
+  const p = rival.pose; if (p) arrow(p.x, p.z, p.h, C.rival);
+  arrow(lerp(c.px, c.x, a), lerp(c.pz, c.z, a), c.ph + angDiff(c.h, c.ph) * a, C.car);
 }
 function drawHud() {
   drawMini();

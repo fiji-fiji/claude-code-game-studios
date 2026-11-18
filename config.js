@@ -62,7 +62,6 @@ window.CONFIG = {
 
   // ---- Marks and sound ----------------------------------------------------------------------
   markSlip: { value: 0.16, min: 0.05, max: 0.6, step: 0.01 },  // rad of slide before the tyres mark the road
-  mapRange: { value: 260, min: 120, max: 600, step: 20 },      // m of road the minimap shows ahead of the car
   engineVol: { value: 0.5, min: 0, max: 1, step: 0.05 },
   windVol: { value: 0.35, min: 0, max: 1, step: 0.05 },
   skidVol: { value: 0.3, min: 0, max: 1, step: 0.05 },
